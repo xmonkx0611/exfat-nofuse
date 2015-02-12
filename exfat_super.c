@@ -302,6 +302,7 @@ static int exfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
 
 	flags = nd ? nd->flags : 0;
 #else
+	unsigned int flags;
 	flags = nd ? nd->flags : 0;
 #endif
 
@@ -338,6 +339,8 @@ static unsigned int exfat_striptail_len(const struct qstr *qstr)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 static int exfat_d_hash(const struct dentry *dentry, struct qstr *qstr)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+static int exfat_d_hash(const struct dentry *dentry, struct qstr *qstr)
 #else
 static int exfat_d_hash(const struct dentry *dentry, const struct inode *inode,
 		struct qstr *qstr)
@@ -348,6 +351,8 @@ static int exfat_d_hash(const struct dentry *dentry, const struct inode *inode,
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
+static int exfat_d_hashi(const struct dentry *dentry, struct qstr *qstr)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 static int exfat_d_hashi(const struct dentry *dentry, struct qstr *qstr)
 #else
 static int exfat_d_hashi(const struct dentry *dentry, const struct inode *inode,
@@ -373,6 +378,8 @@ static int exfat_d_hashi(const struct dentry *dentry, const struct inode *inode,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 static int exfat_cmpi(const struct dentry *parent, const struct dentry *dentry,
 		unsigned int len, const char *str, const struct qstr *name)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+static int exfat_cmpi(const struct dentry *parent, const struct qstr *a, const struct qstr *b)
 #else
 static int exfat_cmpi(const struct dentry *parent, const struct inode *pinode,
 		const struct dentry *dentry, const struct inode *inode,
@@ -382,13 +389,28 @@ static int exfat_cmpi(const struct dentry *parent, const struct inode *pinode,
 	struct nls_table *t = EXFAT_SB(parent->d_sb)->nls_io;
 	unsigned int alen, blen;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+	alen = exfat_striptail_len(a);
+	blen = exfat_striptail_len(b);
+#else
 	alen = exfat_striptail_len(name);
 	blen = __exfat_striptail_len(len, str);
+#endif
+
 	if (alen == blen) {
 		if (t == NULL) {
-			if (strnicmp(name->name, str, alen) == 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+		if (strnicmp(a->name, b->name, alen) == 0)
+#else
+		if (strnicmp(name->name, str, alen) == 0)
+#endif
 				return 0;
-		} else if (nls_strnicmp(t, name->name, str, alen) == 0)
+		} 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+		else if (nls_strnicmp(t, a->name, b->name, alen) == 0)
+#else
+		else if (nls_strnicmp(t, name->name, str, alen) == 0)
+#endif
 			return 0;
 	}
 	return 1;
@@ -397,6 +419,8 @@ static int exfat_cmpi(const struct dentry *parent, const struct inode *pinode,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 static int exfat_cmp(const struct dentry *parent, const struct dentry *dentry,
 		unsigned int len, const char *str, const struct qstr *name)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+static int exfat_cmp(const struct dentry *parent, const struct qstr *a, const struct qstr *b)
 #else
 static int exfat_cmp(const struct dentry *parent, const struct inode *pinode,
 		const struct dentry *dentry, const struct inode *inode,
@@ -404,11 +428,19 @@ static int exfat_cmp(const struct dentry *parent, const struct inode *pinode,
 #endif
 {
 	unsigned int alen, blen;
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+	alen = exfat_striptail_len(a);
+	blen = exfat_striptail_len(b);
+#else
 	alen = exfat_striptail_len(name);
 	blen = __exfat_striptail_len(len, str);
+#endif
 	if (alen == blen) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+		if (strncmp(a->name, b->name, alen) == 0)
+#else
 		if (strncmp(name->name, str, alen) == 0)
+#endif
 			return 0;
 	}
 	return 1;
@@ -2275,7 +2307,7 @@ static int exfat_read_root(struct inode *inode)
 
 	return 0;
 }
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
 static void setup_dops(struct super_block *sb)
 {
 	if (EXFAT_SB(sb)->options.casesensitive == 0)
@@ -2283,7 +2315,7 @@ static void setup_dops(struct super_block *sb)
 	else
 		sb->s_d_op = &exfat_dentry_ops;
 }
-
+#endif
 static int exfat_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *root_inode = NULL;
@@ -2312,9 +2344,9 @@ static int exfat_fill_super(struct super_block *sb, void *data, int silent)
 	error = parse_options(data, silent, &debug, &sbi->options);
 	if (error)
 		goto out_fail;
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
 	setup_dops(sb);
-
+#endif
 	error = -EIO;
 	sb_min_blocksize(sb, 512);
 	sb->s_maxbytes = 0x7fffffffffffffffLL;    /* maximum file size */
@@ -2372,7 +2404,16 @@ static int exfat_fill_super(struct super_block *sb, void *data, int silent)
 		printk(KERN_ERR "[EXFAT] Getting the root inode failed\n");
 		goto out_fail2;
 	}
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+	if (EXFAT_SB(sb)->options.casesensitive == 0)
+    {
+		sb->s_root->d_op = &exfat_ci_dentry_ops;
+    }
+	else
+    {
+		sb->s_root->d_op = &exfat_dentry_ops;
+    }
+#endif
 	return 0;
 
 out_fail2:
